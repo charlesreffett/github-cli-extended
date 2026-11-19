@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Tests for gh-multi using a stub gh binary.
+# Tests for ghx using a stub gh binary.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-wrapper="$root/bin/gh-multi"
+wrapper="$root/bin/ghx"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -27,7 +27,7 @@ echo "token=${GH_TOKEN:-none} args=$*"
 EOF
 chmod +x "$tmp/bin/gh"
 
-export GH_MULTI_REAL_GH="$tmp/bin/gh"
+export GHX_REAL_GH="$tmp/bin/gh"
 export XDG_CONFIG_HOME="$tmp/config"
 unset GH_ACCOUNT GH_TOKEN GH_HOST
 
@@ -72,8 +72,8 @@ check "auth git-credential gets token" \
 check "--as later in args is not consumed" \
   "token=none args=api /user --as x" "$("$wrapper" api /user --as x)"
 
-mkdir -p "$XDG_CONFIG_HOME/gh-multi"
-cat > "$XDG_CONFIG_HOME/gh-multi/accounts" <<'EOF2'
+mkdir -p "$XDG_CONFIG_HOME/ghx"
+cat > "$XDG_CONFIG_HOME/ghx/accounts" <<'EOF2'
 # pattern            account
 *                    frank
 acme-corp            dave
@@ -114,14 +114,14 @@ repo="$(mkrepo https://github.com/acme-corp/app.git)"
 check "GH_ACCOUNT beats config" \
   "token=token-bob args=pr list" "$(cd "$repo" && GH_ACCOUNT=bob "$wrapper" pr list)"
 
-sed -i '' '/^\*/d' "$XDG_CONFIG_HOME/gh-multi/accounts"
+sed -i '' '/^\*/d' "$XDG_CONFIG_HOME/ghx/accounts"
 repo="$(mkrepo https://github.com/someone-else/repo.git)"
 check "no match and no default passes through" \
   "token=none args=pr list" "$(cd "$repo" && "$wrapper" pr list)"
 
 # --- gh account subcommands ---
 export XDG_CONFIG_HOME="$tmp/config2"
-cfg="$XDG_CONFIG_HOME/gh-multi/accounts"
+cfg="$XDG_CONFIG_HOME/ghx/accounts"
 repo="$(mkrepo git@github.com:Acme-Corp/App.git)"
 
 check "account which with no config" \
@@ -204,7 +204,7 @@ check "account use --repo --owner together" \
 Widgets → carol" "$(cd "$repo2" && "$wrapper" account use carol --repo --owner)"
 
 check_fails "account forget is all-or-nothing" \
-  "gh-multi: no mapping for 'Widgets/nope' in $cfg" \
+  "ghx: no mapping for 'Widgets/nope' in $cfg" \
   "$wrapper" account forget --for Widgets/widget-a --for Widgets/nope
 
 check "failed forget left mappings alone" \
@@ -215,23 +215,23 @@ check "account forget with several --for" \
 removed Widgets/widget-b" "$("$wrapper" account forget --for Widgets/widget-a --for Widgets/widget-b)"
 
 check_fails "--for needs a value" \
-  "gh-multi: --for requires a pattern (owner/repo, owner or *)" \
+  "ghx: --for requires a pattern (owner/repo, owner or *)" \
   "$wrapper" account use bob --for --default
 
 check_fails "account use rejects unknown login" \
-  "gh-multi: 'mallory' is not logged in on github.com; run: gh auth login (logged in: alice,bob,carol,dave,erin,frank)" \
+  "ghx: 'mallory' is not logged in on github.com; run: gh auth login (logged in: alice,bob,carol,dave,erin,frank)" \
   "$wrapper" account use mallory --default
 
 check_fails "account use outside a repo needs a target" \
-  "gh-multi: not in a repo with an origin remote; use --for <pattern> or --default" \
+  "ghx: not in a repo with an origin remote; use --for <pattern> or --default" \
   "$wrapper" account use bob
 
 check_fails "account forget with no mapping" \
-  "gh-multi: no mapping for '*' in $cfg" \
+  "ghx: no mapping for '*' in $cfg" \
   "$wrapper" account forget --default
 
 check_fails "account rejects unknown subcommand" \
-  "gh-multi: unknown command: gh account nope (see: gh account help)" \
+  "ghx: unknown command: gh account nope (see: gh account help)" \
   "$wrapper" account nope
 
 check "--which reports source" \
@@ -244,7 +244,7 @@ if out="$("$wrapper" --as missing pr list 2>&1)"; then
   check "missing account fails" "nonzero exit" "exit 0"
 else
   check "missing account fails" \
-    "gh-multi: no token for account 'missing' on github.com (from --as flag); run: gh auth login" "$out"
+    "ghx: no token for account 'missing' on github.com (from --as flag); run: gh auth login" "$out"
 fi
 
 echo "$pass passed, $fail failed"

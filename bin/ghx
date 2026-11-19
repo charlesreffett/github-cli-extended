@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# gh-multi: run `gh` as a specific account without switching the global active account.
+# ghx: run `gh` as a specific account without switching the global active account.
 #
 # Account resolution (first match wins):
 #   1. `--as <user>` given as the first argument(s)
 #   2. GH_ACCOUNT environment variable
-#   3. $XDG_CONFIG_HOME/gh-multi/accounts (default ~/.config/gh-multi/accounts), matched
+#   3. $XDG_CONFIG_HOME/ghx/accounts (default ~/.config/ghx/accounts), matched
 #      against the `origin` remote. Lines are `<pattern> <account>`, where pattern is
 #      `owner/repo` (exact repo), `owner` (any repo of that owner) or `*` (default).
 #      The most specific matching pattern wins, regardless of line order.
@@ -17,9 +17,9 @@
 
 set -euo pipefail
 
-prog=gh-multi
+prog=ghx
 host="${GH_HOST:-github.com}"
-config_file="${XDG_CONFIG_HOME:-$HOME/.config}/gh-multi/accounts"
+config_file="${XDG_CONFIG_HOME:-$HOME/.config}/ghx/accounts"
 
 die() {
   echo "$prog: $*" >&2
@@ -28,8 +28,8 @@ die() {
 
 # Locate the real gh binary, skipping this script (which may be installed as `gh`).
 find_real_gh() {
-  if [[ -n "${GH_MULTI_REAL_GH:-}" ]]; then
-    echo "$GH_MULTI_REAL_GH"
+  if [[ -n "${GHX_REAL_GH:-}" ]]; then
+    echo "$GHX_REAL_GH"
     return
   fi
   local self candidate
@@ -40,7 +40,7 @@ find_real_gh() {
       return
     fi
   done < <(type -ap gh)
-  die "could not find the real gh binary on PATH (set GH_MULTI_REAL_GH)"
+  die "could not find the real gh binary on PATH (set GHX_REAL_GH)"
 }
 
 # Print the current repo's `owner/repo` from the origin remote, if any.
@@ -284,7 +284,7 @@ fi
 
 # `gh auth` manages stored credentials and refuses to work while GH_TOKEN is set,
 # so pass it straight through. The exception is `auth git-credential`, which serves
-# the selected account's token to git when gh-multi is git's credential helper.
+# the selected account's token to git when ghx is git's credential helper.
 if [[ -z "$account" || ( "${1:-}" == "auth" && "${2:-}" != "git-credential" ) ]]; then
   exec "$real_gh" "$@"
 fi

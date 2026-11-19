@@ -2,7 +2,7 @@
 
 A wrapper for the `gh` CLI command that adds multi-account support.
 
-`gh-multi` picks a GitHub account for each invocation and passes that account's token to
+`ghx` picks a GitHub account for each invocation and passes that account's token to
 `gh` via `GH_TOKEN`. The global active account (`gh auth switch`) is never changed, so
 different shells and directories can use different accounts at the same time.
 
@@ -15,15 +15,15 @@ different shells and directories can use different accounts at the same time.
 ## Install
 
 ```sh
-ln -s "$PWD/bin/gh-multi" ~/.local/bin/gh-multi
+ln -s "$PWD/bin/ghx" ~/.local/bin/ghx
 ```
 
 To use it transparently, install it as `gh` in a directory that comes before the real
 `gh` on your `PATH`. The wrapper skips itself when it looks for the real binary
-(override with `GH_MULTI_REAL_GH=/path/to/gh`).
+(override with `GHX_REAL_GH=/path/to/gh`).
 
 ```sh
-ln -s "$PWD/bin/gh-multi" ~/.local/bin/gh
+ln -s "$PWD/bin/ghx" ~/.local/bin/gh
 ```
 
 ## Usage
@@ -75,7 +75,7 @@ current repo.
 
 ### Config file
 
-`$XDG_CONFIG_HOME/gh-multi/accounts`, by default `~/.config/gh-multi/accounts`. One mapping per
+`$XDG_CONFIG_HOME/ghx/accounts`, by default `~/.config/ghx/accounts`. One mapping per
 line; blank lines and lines starting with `#` are ignored. The file can be edited by hand.
 
 ```
@@ -109,7 +109,7 @@ First match wins:
 |---|---|
 | `GH_ACCOUNT` | Account to use, overriding the config file |
 | `GH_HOST` | Host to fetch tokens for (default `github.com`) |
-| `GH_MULTI_REAL_GH` | Path to the real `gh` binary, if auto-detection picks the wrong one |
+| `GHX_REAL_GH` | Path to the real `gh` binary, if auto-detection picks the wrong one |
 | `XDG_CONFIG_HOME` | Base directory for the config file (default `~/.config`) |
 
 ## Notes
@@ -121,11 +121,11 @@ First match wins:
 
 ## Plain git with the right account
 
-To make `git push`/`git pull` use the account configured for the repo, make `gh-multi` git's credential helper for GitHub:
+To make `git push`/`git pull` use the account configured for the repo, make `ghx` git's credential helper for GitHub:
 
 ```sh
 git config --global --replace-all credential.https://github.com.helper ''
-git config --global --add credential.https://github.com.helper '!gh-multi auth git-credential'
+git config --global --add credential.https://github.com.helper '!ghx auth git-credential'
 ```
 
 This replaces the helper that `gh auth setup-git` installs. With no account selected it
