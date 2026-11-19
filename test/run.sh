@@ -114,7 +114,7 @@ repo="$(mkrepo https://github.com/acme-corp/app.git)"
 check "GH_ACCOUNT beats config" \
   "token=token-bob args=pr list" "$(cd "$repo" && GH_ACCOUNT=bob "$wrapper" pr list)"
 
-sed -i '' '/^\*/d' "$XDG_CONFIG_HOME/ghx/accounts"
+grep -v '^\*' "$XDG_CONFIG_HOME/ghx/accounts" > "$tmp/accounts" && mv "$tmp/accounts" "$XDG_CONFIG_HOME/ghx/accounts"
 repo="$(mkrepo https://github.com/someone-else/repo.git)"
 check "no match and no default passes through" \
   "token=none args=pr list" "$(cd "$repo" && "$wrapper" pr list)"

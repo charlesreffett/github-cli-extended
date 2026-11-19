@@ -162,7 +162,7 @@ account_list() {
   awk -v hit="${hit%% *}" '
     /^[[:space:]]*(#|$)/ { next }
     NR == FNR { if (length($1) > w) w = length($1); next }
-    { printf "%s %-*s  %s\n", ($1 == hit ? "→" : " "), w, $1, $2 }
+    { printf "%s %-" w "s  %s\n", ($1 == hit ? "→" : " "), $1, $2 }
   ' "$config_file" "$config_file"
 }
 
