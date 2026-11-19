@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+# gh-multi: run `gh` as a specific account without switching the global active account.
+#
+# Account resolution (first match wins):
+#   1. `--as <user>` given as the first argument(s)
+#   2. GH_ACCOUNT environment variable
+#   3. $XDG_CONFIG_HOME/gh-multi/accounts (default ~/.config/gh-multi/accounts), matched
+#      against the `origin` remote. Lines are `<pattern> <account>`, where pattern is
+#      `owner/repo` (exact repo), `owner` (any repo of that owner) or `*` (default).
+#      The most specific matching pattern wins, regardless of line order.
+#   4. Nothing: gh runs with its own active account
+#
+# `gh account ...` manages the config file; run `gh account help` for details.
+#
+# The resolved account's token is fetched with `gh auth token --user` and passed to
+# gh via GH_TOKEN for that single invocation only.
+
+set -euo pipefail
+
+prog=gh-multi
+host="${GH_HOST:-github.com}"
+config_file="${XDG_CONFIG_HOME:-$HOME/.config}/gh-multi/accounts"
+
+die() {
+  echo "$prog: $*" >&2
+  exit 1
+}
+
+# Locate the real gh binary, skipping this script (which may be installed as `gh`).
+find_real_gh() {
+  if [[ -n "${GH_MULTI_REAL_GH:-}" ]]; then
+    echo "$GH_MULTI_REAL_GH"
+    return
+  fi
+  local self candidate
+  self="$(realpath "${BASH_SOURCE[0]}")"
+  while IFS= read -r candidate; do
+    if [[ "$(realpath "$candidate")" != "$self" ]]; then
+      echo "$candidate"
+      return
+    fi
+  done < <(type -ap gh)
+  die "could not find the real gh binary on PATH (set GH_MULTI_REAL_GH)"
+}
+
+# Print the current repo's `owner/repo` from the origin remote, if any.
+repo_slug() {
+  local url
+  url="$(git remote get-url origin 2>/dev/null)" || return 0
+  # https://host/owner/repo(.git), git@host:owner/repo(.git), ssh://git@host/owner/repo
+  sed -E 's#^[a-z+]+://([^@/]+@)?[^/]+/##; s#^[^@]+@[^:]+:##; s#\.git$##; s#/+$##' <<<"$url"
+}
+
+# Print "<pattern> <account>" for the config line that best matches the given slug.
+# Repo beats owner beats `*`.
+match_config() {
+  [[ -f "$config_file" ]] || return 0
+  awk -v slug="$1" '
+    BEGIN { slug = tolower(slug); owner = slug; sub(/\/.*/, "", owner) }
+    /^[[:space:]]*(#|$)/ { next }
+    {
+      key = tolower($1)
+      if (slug != "" && key == slug)       { if (rank < 3) { rank = 3; hit = $1 " " $2 } }
+      else if (owner != "" && key == owner) { if (rank < 2) { rank = 2; hit = $1 " " $2 } }
+      else if (key == "*")                  { if (rank < 1) { rank = 1; hit = $1 " " $2 } }
+    }
+    END { if (rank) print hit }
+  ' "$config_file"
+}
+
+# Print the logins authenticated with gh on $host, one per line.
+logged_in_accounts() {
+  "$real_gh" auth status --json hosts --jq ".hosts[\"$host\"][]?.login" 2>/dev/null
+}
+
+# Print the patterns a `gh account use/forget` call targets, one per line. Each flag adds
+# a pattern; with no flags, the target is the current repo.
+target_patterns() {
+  local slug="" want_repo=false want_owner=false
+  local -a patterns=()
+  [[ $# -eq 0 ]] && want_repo=true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) want_repo=true ;;
+      --owner) want_owner=true ;;
+      --default) patterns+=("*") ;;
+      --for)
+        [[ $# -ge 2 && "$2" != -* ]] || die "--for requires a pattern (owner/repo, owner or *)"
+        patterns+=("$2")
+        shift
+        ;;
+      --for=*) patterns+=("${1#--for=}") ;;
+      *) die "unknown argument: $1 (see: gh account help)" ;;
+    esac
+    shift
+  done
+  if $want_repo || $want_owner; then
+    slug="$(repo_slug)"
+    [[ -n "$slug" ]] || die "not in a repo with an origin remote; use --for <pattern> or --default"
+    $want_repo && patterns+=("$slug")
+    $want_owner && patterns+=("${slug%%/*}")
+  fi
+  printf '%s\n' "${patterns[@]}"
+}
+
+# Exit 0 if the config has a line for <pattern>.
+has_mapping() {
+  awk -v pattern="$1" '
+    !/^[[:space:]]*(#|$)/ && tolower($1) == tolower(pattern) { found = 1 }
+    END { exit !found }
+  ' "$config_file" 2>/dev/null
+}
+
+# Rewrite the config with <pattern> mapped to <account>, or removed if <account> is empty.
+# Comments and other lines are kept as they are.
+write_config() {
+  local pattern="$1" account="$2" tmp
+  mkdir -p "$(dirname "$config_file")"
+  touch "$config_file"
+  tmp="$(mktemp "$config_file.XXXXXX")"
+  awk -v pattern="$pattern" -v account="$account" '
+    !/^[[:space:]]*(#|$)/ && tolower($1) == tolower(pattern) {
+      if (account != "" && !done) printf "%-24s %s\n", pattern, account
+      done = 1
+      next
+    }
+    { print }
+    END { if (!done && account != "") printf "%-24s %s\n", pattern, account }
+  ' "$config_file" > "$tmp"
+  mv "$tmp" "$config_file"
+}
+
+account_which() {
+  local hit
+  if [[ -n "${GH_ACCOUNT:-}" ]]; then
+    echo "$GH_ACCOUNT (GH_ACCOUNT)"
+  elif hit="$(match_config "$(repo_slug)")" && [[ -n "$hit" ]]; then
+    echo "${hit#* } (config: ${hit%% *})"
+  else
+    echo "(gh active account)"
+  fi
+}
+
+account_list() {
+  local active hit
+  active="$("$real_gh" auth status --json hosts --jq ".hosts[\"$host\"][]? | select(.active) | .login" 2>/dev/null || true)"
+  echo "Logged in on $host:"
+  logged_in_accounts | while IFS= read -r login; do
+    if [[ "$login" == "$active" ]]; then
+      echo "  $login (gh active account)"
+    else
+      echo "  $login"
+    fi
+  done
+  echo
+  echo "Mappings in $config_file:"
+  if ! awk '!/^[[:space:]]*(#|$)/ { found = 1 } END { exit !found }' "$config_file" 2>/dev/null; then
+    echo "  (none)"
+    return
+  fi
+  hit="$(match_config "$(repo_slug)")"
+  awk -v hit="${hit%% *}" '
+    /^[[:space:]]*(#|$)/ { next }
+    NR == FNR { if (length($1) > w) w = length($1); next }
+    { printf "%s %-*s  %s\n", ($1 == hit ? "→" : " "), w, $1, $2 }
+  ' "$config_file" "$config_file"
+}
+
+account_use() {
+  [[ $# -ge 1 && "$1" != -* ]] || die "usage: gh account use <account> [--repo] [--owner] [--default] [--for <pattern>]..."
+  local account patterns pattern
+  patterns="$(target_patterns "${@:2}")"
+  # Store the login as gh spells it: `gh auth token --user` is case-sensitive.
+  account="$(logged_in_accounts | awk -v want="$1" 'tolower($0) == tolower(want) { print; exit }')"
+  if [[ -z "$account" ]]; then
+    die "'$1' is not logged in on $host; run: gh auth login (logged in: $(logged_in_accounts | paste -sd, -))"
+  fi
+  while IFS= read -r pattern; do
+    write_config "$pattern" "$account"
+    echo "$pattern → $account"
+  done <<<"$patterns"
+}
+
+account_forget() {
+  local patterns pattern
+  patterns="$(target_patterns "$@")"
+  # Check every pattern first so a typo doesn't leave the config half-updated.
+  while IFS= read -r pattern; do
+    has_mapping "$pattern" || die "no mapping for '$pattern' in $config_file"
+  done <<<"$patterns"
+  while IFS= read -r pattern; do
+    write_config "$pattern" ""
+    echo "removed $pattern"
+  done <<<"$patterns"
+}
+
+account_help() {
+  cat <<EOF
+Manage which GitHub account gh uses per repo.
+
+USAGE
+  gh account                     Show the account used here and why
+  gh account list                Show logged-in accounts and all mappings
+  gh account use <account>       Use <account> for the current repo
+  gh account forget              Remove the current repo's mapping
+
+TARGET FLAGS (for use and forget; combine and repeat to target several at once)
+  --repo                         The current repo (the default when no flag is given)
+  --owner                        The current repo's owner (every repo of that user or org)
+  --default                      The default for everything else (*)
+  --for <pattern>                An explicit pattern: owner/repo, owner or *
+
+EXAMPLES
+  gh account use <account> --for <owner>/<repo> --for <owner>/<repo>
+  gh account use <account> --owner
+  gh account forget --for <owner>/<repo> --for <owner>/<repo>
+
+Mappings live in $config_file.
+EOF
+}
+
+account_command() {
+  local sub="${1:-which}"
+  [[ $# -gt 0 ]] && shift
+  case "$sub" in
+    which) account_which ;;
+    list | ls) account_list ;;
+    use) account_use "$@" ;;
+    forget | rm) account_forget "$@" ;;
+    help | -h | --help) account_help ;;
+    *) die "unknown command: gh account $sub (see: gh account help)" ;;
+  esac
+}
+
+real_gh="$(find_real_gh)"
+
+if [[ "${1:-}" == "account" ]]; then
+  shift
+  account_command "$@"
+  exit
+fi
+
+account=""
+source_desc=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --as)
+      [[ $# -ge 2 ]] || die "--as requires an account name"
+      account="$2"
+      source_desc="--as flag"
+      shift 2
+      ;;
+    --as=*)
+      account="${1#--as=}"
+      source_desc="--as flag"
+      shift
+      ;;
+    --which)
+      if [[ -n "$account" ]]; then
+        echo "$account ($source_desc)"
+      else
+        account_which
+      fi
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ -z "$account" && -n "${GH_ACCOUNT:-}" ]]; then
+  account="$GH_ACCOUNT"
+  source_desc="GH_ACCOUNT"
+fi
+if [[ -z "$account" ]]; then
+  hit="$(match_config "$(repo_slug)")"
+  if [[ -n "$hit" ]]; then
+    account="${hit#* }"
+    source_desc="config: ${hit%% *}"
+  fi
+fi
+
+# `gh auth` manages stored credentials and refuses to work while GH_TOKEN is set,
+# so pass it straight through. The exception is `auth git-credential`, which serves
+# the selected account's token to git when gh-multi is git's credential helper.
+if [[ -z "$account" || ( "${1:-}" == "auth" && "${2:-}" != "git-credential" ) ]]; then
+  exec "$real_gh" "$@"
+fi
+
+token="$("$real_gh" auth token --hostname "$host" --user "$account" 2>/dev/null)" \
+  || die "no token for account '$account' on $host (from $source_desc); run: gh auth login"
+
+GH_TOKEN="$token" exec "$real_gh" "$@"
