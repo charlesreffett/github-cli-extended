@@ -14,19 +14,35 @@ different shells and directories can use different accounts at the same time.
 
 ## Install
 
+Symlink `bin/ghx` from this repo into any directory on your `PATH`, under one of two
+names. `<bin-dir>` below stands for that directory; `echo "$PATH" | tr ':' '\n'` lists the
+candidates in search order.
+
+**As `gh`** (recommended): every `gh` command, including ones run by scripts and editors, goes
+through the wrapper. `<bin-dir>` must come **before** the directory of the real `gh` in your
+`PATH`.
+
 ```sh
-ln -s "$PWD/bin/ghx" ~/.local/bin/ghx
+ln -s "$PWD/bin/ghx" <bin-dir>/gh
+type -a gh   # the symlink should be listed first, the real gh after it
 ```
 
-To use it transparently, install it as `gh` in a directory that comes before the real
-`gh` on your `PATH`. The wrapper skips itself when it looks for the real binary
-(override with `GHX_REAL_GH=/path/to/gh`).
+**As `ghx`**: the wrapper only runs when you call `ghx` explicitly; plain `gh` is
+untouched. Any directory on your `PATH` works.
 
 ```sh
-ln -s "$PWD/bin/ghx" ~/.local/bin/gh
+ln -s "$PWD/bin/ghx" <bin-dir>/ghx
 ```
+
+The wrapper finds the real `gh` by skipping itself on your `PATH`. If it picks the wrong one, set
+`GHX_REAL_GH=/path/to/gh`.
+
+To uninstall, remove the symlink. The symlink points into this repo, so moving or deleting the
+repo breaks it.
 
 ## Usage
+
+Commands are shown as `gh`. If you installed the wrapper as `ghx`, use that name instead.
 
 ```
 gh [--as <account>] <command> [<args>...]
